@@ -2,11 +2,22 @@
 Custom exceptions
 """
 
+class Neo4jException(Exception):
+    """Base Neo4j exception"""
+    pass
+
+class ServiceUnavailable(Neo4jException):
+    """Neo4j service is unavailable"""
+    pass
+
+
+class AuthError(Neo4jException):
+    """Authentication failed"""
+    pass
 
 class RAGException(Exception):
     """Base RAG exception"""
     pass
-
 
 class RAGInitializationError(RAGException):
     """Initialization failed"""

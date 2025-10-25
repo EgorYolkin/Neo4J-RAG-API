@@ -1,5 +1,5 @@
 from neo4j import GraphDatabase
-from neo4jrag.services.neo4j import ServiceUnavailable, AuthError
+from neo4jrag.core.exceptions import ServiceUnavailable, AuthError
 from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
 import logging
