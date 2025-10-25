@@ -1,14 +1,16 @@
-from typing import List, Dict
+"""
+Graph builder with multi-user support
+"""
+from typing import List, Dict, Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
 import logging
-import json
 
 logger = logging.getLogger(__name__)
 
 
 class GraphBuilder:
-    """Построение графа знаний из документов"""
+    """Построение графа знаний с поддержкой многопользовательского режима"""
     
     def __init__(self, connector: Neo4jConnector, chunk_size: int = 500, chunk_overlap: int = 50):
         self.connector = connector
@@ -19,8 +21,12 @@ class GraphBuilder:
         )
     
     def setup_schema(self) -> None:
-        """Создание constraints и индексов"""
+        """Создание constraints и индексов с поддержкой user_id"""
         constraints = [
+            """
+            CREATE CONSTRAINT unique_user IF NOT EXISTS
+            FOR (u:User) REQUIRE u.id IS UNIQUE
+            """,
             """
             CREATE CONSTRAINT unique_document IF NOT EXISTS
             FOR (d:Document) REQUIRE d.id IS UNIQUE
@@ -38,35 +44,69 @@ class GraphBuilder:
                 if "already exists" not in str(e).lower():
                     logger.warning(f"Constraint issue: {e}")
         
-        logger.info("✓ Schema setup complete")
+        # Создаём индекс для быстрого поиска по user_id
+        try:
+            self.connector.execute_write("""
+                CREATE INDEX document_user_idx IF NOT EXISTS
+                FOR (d:Document) ON (d.user_id)
+            """)
+        except Exception as e:
+            if "already exists" not in str(e).lower():
+                logger.warning(f"Index issue: {e}")
+        
+        logger.info("✓ Schema setup complete with multi-user support")
+    
+    def create_user(self, user_id: str, username: str, email: str) -> None:
+        """Создание узла пользователя"""
+        query = """
+        MERGE (u:User {id: $user_id})
+        SET u.username = $username,
+            u.email = $email,
+            u.created_at = datetime()
+        RETURN u
+        """
+        
+        self.connector.execute_write(query, {
+            "user_id": user_id,
+            "username": username,
+            "email": email
+        })
+        
+        logger.info(f"✓ User '{username}' created/updated")
     
     def add_document(
         self,
         doc_id: str,
         title: str,
         content: str,
+        user_id: str,  # ✅ Добавлен user_id
         metadata: Dict = None
     ) -> int:
-        """Добавление документа с разбиением на чанки"""
+        """Добавление документа с привязкой к пользователю"""
         metadata = metadata or {}
         
-        # Создание документа
-        # Сериализуем metadata в JSON строку, т.к. Neo4j не поддерживает вложенные словари
+        # Создание документа с user_id
         doc_query = """
+        MERGE (u:User {id: $user_id})
         MERGE (d:Document {id: $doc_id})
         SET d.title = $title,
             d.content = $content,
             d.preview = $preview,
-            d.metadata_json = $metadata_json
+            d.user_id = $user_id,
+            d.metadata_json = $metadata_json,
+            d.created_at = datetime()
+        MERGE (u)-[:OWNS]->(d)
         RETURN d
         """
         
+        import json
         self.connector.execute_write(doc_query, {
+            "user_id": user_id,
             "doc_id": doc_id,
             "title": title,
             "content": content,
             "preview": content[:200],
-            "metadata_json": json.dumps(metadata)  # ✅ Конвертируем в JSON строку
+            "metadata_json": json.dumps(metadata)
         })
         
         # Разбиение на чанки
@@ -80,7 +120,7 @@ class GraphBuilder:
             MERGE (c:Chunk {id: $chunk_id})
             SET c.text = $text,
                 c.position = $position,
-                c.length = $length
+                c.user_id = $user_id
             MERGE (d)-[:HAS_CHUNK]->(c)
             """
             
@@ -89,7 +129,7 @@ class GraphBuilder:
                 "chunk_id": chunk_id,
                 "text": chunk_text,
                 "position": idx,
-                "length": len(chunk_text)
+                "user_id": user_id
             })
             
             # Связь с предыдущим чанком
@@ -105,33 +145,5 @@ class GraphBuilder:
                     "curr_id": chunk_id
                 })
         
-        logger.info(f"✓ Added document '{title}' with {len(chunks)} chunks")
+        logger.info(f"✓ Added document '{title}' for user {user_id} with {len(chunks)} chunks")
         return len(chunks)
-    
-    def add_documents_batch(
-        self,
-        documents: List[Dict[str, str]]
-    ) -> Dict[str, int]:
-        """
-        Пакетное добавление документов
-        
-        Args:
-            documents: Список словарей с ключами: id, title, content, metadata
-        
-        Returns:
-            Статистика добавления
-        """
-        stats = {"total_docs": 0, "total_chunks": 0}
-        
-        for doc in documents:
-            chunk_count = self.add_document(
-                doc_id=doc["id"],
-                title=doc["title"],
-                content=doc["content"],
-                metadata=doc.get("metadata", {})
-            )
-            stats["total_docs"] += 1
-            stats["total_chunks"] += chunk_count
-        
-        logger.info(f"✓ Added {stats['total_docs']} documents with {stats['total_chunks']} chunks")
-        return stats

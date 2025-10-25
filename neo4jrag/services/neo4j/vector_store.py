@@ -1,3 +1,6 @@
+"""
+Vector store with user isolation
+"""
 from typing import List, Dict
 from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
 from neo4jrag.services.ollama.ollama_loader import OllamaLoader
@@ -7,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    """Управление векторными эмбеддингами"""
+    """Управление векторными эмбеддингами с изоляцией по пользователям"""
     
     def __init__(
         self,
@@ -44,13 +47,26 @@ class VectorStore:
             else:
                 raise
     
-    def generate_embeddings(self) -> int:
-        """Генерация эмбеддингов для всех чанков"""
-        chunks = self.connector.execute_query("""
-            MATCH (c:Chunk)
+    def generate_embeddings(self, user_id: str = None) -> int:
+        """
+        Генерация эмбеддингов для чанков
+        
+        Args:
+            user_id: Если указан, генерирует только для чанков этого пользователя
+        """
+        if user_id:
+            query = """
+            MATCH (c:Chunk {user_id: $user_id})
             WHERE c.embedding IS NULL
             RETURN c.id as id, c.text as text
-        """)
+            """
+            chunks = self.connector.execute_query(query, {"user_id": user_id})
+        else:
+            chunks = self.connector.execute_query("""
+                MATCH (c:Chunk)
+                WHERE c.embedding IS NULL
+                RETURN c.id as id, c.text as text
+            """)
         
         if not chunks:
             logger.info("✓ All chunks have embeddings")
@@ -72,11 +88,40 @@ class VectorStore:
         logger.info(f"✓ Generated {len(chunks)} embeddings")
         return len(chunks)
     
-    def similarity_search(self, query: str, k: int = 3) -> List[Dict]:
-        """Векторный поиск"""
+    def similarity_search(
+        self, 
+        query: str, 
+        k: int = 3,
+        user_id: str = None  # ✅ Фильтрация по пользователю
+    ) -> List[Dict]:
+        """
+        Векторный поиск с опциональной фильтрацией по user_id
+        """
         query_embedding = self.ollama.embed_text(query)
         
-        results = self.connector.execute_query(f"""
+        if user_id:
+            # Поиск только в документах пользователя
+            search_query = f"""
+            CALL db.index.vector.queryNodes(
+                '{self.index_name}',
+                {k * 3},  // Берём больше, т.к. будем фильтровать
+                $query_embedding
+            )
+            YIELD node, score
+            WHERE node.user_id = $user_id
+            RETURN node.id as chunk_id,
+                   node.text as text,
+                   score
+            ORDER BY score DESC
+            LIMIT {k}
+            """
+            results = self.connector.execute_query(search_query, {
+                "query_embedding": query_embedding,
+                "user_id": user_id
+            })
+        else:
+            # Поиск по всем документам (для админа или без аутентификации)
+            search_query = f"""
             CALL db.index.vector.queryNodes(
                 '{self.index_name}',
                 {k},
@@ -87,13 +132,21 @@ class VectorStore:
                    node.text as text,
                    score
             ORDER BY score DESC
-        """, {"query_embedding": query_embedding})
+            """
+            results = self.connector.execute_query(search_query, {
+                "query_embedding": query_embedding
+            })
         
         return results
     
-    def hybrid_search(self, query: str, k: int = 3) -> List[Dict]:
-        """Гибридный поиск с контекстом"""
-        vector_results = self.similarity_search(query, k)
+    def hybrid_search(
+        self, 
+        query: str, 
+        k: int = 3,
+        user_id: str = None  # ✅ Фильтрация по пользователю
+    ) -> List[Dict]:
+        """Гибридный поиск с контекстом и фильтрацией по user_id"""
+        vector_results = self.similarity_search(query, k, user_id)
         
         enriched = []
         for result in vector_results:
