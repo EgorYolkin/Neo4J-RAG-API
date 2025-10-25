@@ -2,8 +2,8 @@ from typing import TypedDict, List, Dict, Annotated
 from operator import add
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate
-from ..neo4j.vector_store import VectorStore
-from .ollama_loader import OllamaLoader
+from neo4jrag.services.neo4j.vector_store import VectorStore
+from neo4jrag.services.ollama.ollama_loader import OllamaLoader
 import logging
 
 logger = logging.getLogger(__name__)

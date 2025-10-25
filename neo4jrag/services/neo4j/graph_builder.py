@@ -1,6 +1,6 @@
 from typing import List, Dict
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from .neo4j_connector import Neo4jConnector
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
 import logging
 import json
 

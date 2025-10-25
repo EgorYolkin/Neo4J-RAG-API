@@ -6,12 +6,12 @@ from typing import Optional
 
 from neo4jrag.services.cache.semantic_cache import SemanticCache
 
-from ..config import Config
-from ..services.neo4j.neo4j_connector import Neo4jConnector
-from ..services.neo4j.graph_builder import GraphBuilder
-from ..services.neo4j.vector_store import VectorStore
-from ..services.ollama.ollama_loader import OllamaLoader
-from ..services.ollama.rag_pipeline import RAGPipeline
+from neo4jrag.config import Config
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+from neo4jrag.services.neo4j.graph_builder import GraphBuilder
+from neo4jrag.services.neo4j.vector_store import VectorStore
+from neo4jrag.services.ollama.ollama_loader import OllamaLoader
+from neo4jrag.services.ollama.rag_pipeline import RAGPipeline
 from .exceptions import RAGInitializationError
 
 logger = logging.getLogger(__name__)

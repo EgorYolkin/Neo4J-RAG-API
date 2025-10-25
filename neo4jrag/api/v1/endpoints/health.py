@@ -4,11 +4,11 @@ Health check endpoints
 from fastapi import APIRouter, Depends, status
 from typing import Dict
 
-from ....domain.schemas.response import HealthResponse
-from ....services.neo4j.neo4j_connector import Neo4jConnector
-from ....services.ollama.ollama_loader import OllamaLoader
-from ....services.cache.semantic_cache import SemanticCache
-from ...deps import (
+from neo4jrag.domain.schemas.response import HealthResponse
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+from neo4jrag.services.ollama.ollama_loader import OllamaLoader
+from neo4jrag.services.cache.semantic_cache import SemanticCache
+from neo4jrag.api.deps import (
     get_neo4j_connector,
     get_ollama_loader,
     get_semantic_cache,

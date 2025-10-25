@@ -1,6 +1,6 @@
 from typing import List, Dict
-from .neo4j_connector import Neo4jConnector
-from ..ollama.ollama_loader import OllamaLoader
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+from neo4jrag.services.ollama.ollama_loader import OllamaLoader
 import logging
 
 logger = logging.getLogger(__name__)

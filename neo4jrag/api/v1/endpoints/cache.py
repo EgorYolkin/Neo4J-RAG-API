@@ -4,8 +4,8 @@ Cache management endpoints
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict
 
-from ....services.cache.semantic_cache import SemanticCache
-from ...deps import get_semantic_cache
+from neo4jrag.services.cache.semantic_cache import SemanticCache
+from neo4jrag.api.deps import get_semantic_cache
 
 router = APIRouter()
 

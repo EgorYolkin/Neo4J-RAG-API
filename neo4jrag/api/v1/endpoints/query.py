@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.params import Query as FastAPIQuery
 from typing import Dict, List
 
-from ....domain.schemas.request import QueryRequest, BatchQueryRequest
-from ....domain.schemas.response import QueryResponse, BatchQueryResponse, SourceInfo
-from ....services.cache.semantic_cache import SemanticCache
-from ....services.ollama.ollama_loader import OllamaLoader
-from ....services.ollama.rag_pipeline import RAGPipeline
-from ....services.neo4j.neo4j_connector import Neo4jConnector
-from ....services.neo4j.vector_store import VectorStore
-from ...deps import (
+from neo4jrag.domain.schemas.request import QueryRequest, BatchQueryRequest
+from neo4jrag.domain.schemas.response import QueryResponse, BatchQueryResponse, SourceInfo
+from neo4jrag.services.cache.semantic_cache import SemanticCache
+from neo4jrag.services.ollama.ollama_loader import OllamaLoader
+from neo4jrag.services.ollama.rag_pipeline import RAGPipeline
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+from neo4jrag.services.neo4j.vector_store import VectorStore
+from neo4jrag.api.deps import (
     get_ollama_loader,
     get_rag_pipeline,
     get_semantic_cache,

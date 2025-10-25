@@ -6,15 +6,15 @@ from typing import List, Optional
 import uuid
 from datetime import datetime
 
-from ....domain.schemas.request import DocumentCreateRequest
-from ....domain.schemas.response import (
+from neo4jrag.domain.schemas.request import DocumentCreateRequest
+from neo4jrag.domain.schemas.response import (
     DocumentResponse,
     DocumentListResponse,
     DocumentDeleteResponse
 )
-from ....services.neo4j.neo4j_connector import Neo4jConnector
-from ....services.neo4j.graph_builder import GraphBuilder
-from ....services.neo4j.vector_store import VectorStore
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+from neo4jrag.services.neo4j.graph_builder import GraphBuilder
+from neo4jrag.services.neo4j.vector_store import VectorStore
 from ...deps import (
     get_neo4j_connector,
     get_graph_builder,
