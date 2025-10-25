@@ -1,5 +1,5 @@
 """
-Document management endpoints
+Document management with user isolation
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
@@ -30,20 +30,22 @@ async def create_document(
     graph_builder: GraphBuilder = Depends(get_graph_builder),
     vector_store: VectorStore = Depends(get_vector_store)
 ) -> DocumentResponse:
-    """Создание нового документа"""
+    """Создание нового документа (только для аутентифицированных пользователей)"""
     try:
         doc_id = f"doc_{uuid.uuid4().hex[:8]}"
-        
-        # Добавление документа в граф
+        user_id = request.user_id
+
+        # Добавление документа с user_id
         chunks_count = graph_builder.add_document(
             doc_id=doc_id,
             title=request.title,
             content=request.content,
+            user_id=user_id,  # ✅ Привязываем к пользователю
             metadata=request.metadata
         )
         
-        # Генерация эмбеддингов для новых чанков
-        vector_store.generate_embeddings()
+        # Генерация эмбеддингов для новых чанков этого пользователя
+        vector_store.generate_embeddings(user_id=user_id)
         
         return DocumentResponse(
             id=doc_id,
@@ -62,33 +64,36 @@ async def create_document(
 
 @router.get("/", response_model=DocumentListResponse)
 async def list_documents(
-    skip: int = Query(0, ge=0, description="Пропустить N документов"),
-    limit: int = Query(10, ge=1, le=100, description="Максимум документов"),
+    user_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
     neo4j_connector: Neo4jConnector = Depends(get_neo4j_connector)
 ) -> DocumentListResponse:
-    """Получение списка всех документов"""
-    try:
+    """Получение списка документов пользователя"""
+    try:        
+        # Получаем ТОЛЬКО документы этого пользователя
         query = """
-        MATCH (d:Document)
+        MATCH (d:Document {user_id: $user_id})
         OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
         WITH d, count(c) as chunks_count
         RETURN d.id as id,
                d.title as title,
                d.preview as preview,
                chunks_count
-        ORDER BY d.title
+        ORDER BY d.created_at DESC
         SKIP $skip
         LIMIT $limit
         """
         
         results = neo4j_connector.execute_query(query, {
+            "user_id": user_id,
             "skip": skip,
             "limit": limit
         })
         
-        # Общее количество
-        count_query = "MATCH (d:Document) RETURN count(d) as total"
-        total_result = neo4j_connector.execute_query(count_query)
+        # Общее количество документов пользователя
+        count_query = "MATCH (d:Document {user_id: $user_id}) RETURN count(d) as total"
+        total_result = neo4j_connector.execute_query(count_query, {"user_id": user_id})
         total = total_result[0]["total"] if total_result else 0
         
         documents = [
@@ -115,75 +120,43 @@ async def list_documents(
         )
 
 
-@router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(
-    document_id: str,
-    neo4j_connector: Neo4jConnector = Depends(get_neo4j_connector)
-) -> DocumentResponse:
-    """Получение информации о конкретном документе"""
-    try:
-        query = """
-        MATCH (d:Document {id: $doc_id})
-        OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-        WITH d, count(c) as chunks_count
-        RETURN d.id as id,
-               d.title as title,
-               d.preview as preview,
-               chunks_count
-        LIMIT 1
-        """
-        
-        result = neo4j_connector.execute_query(query, {"doc_id": document_id})
-        
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Document {document_id} not found"
-            )
-        
-        doc = result[0]
-        return DocumentResponse(
-            id=doc["id"],
-            title=doc["title"],
-            preview=doc["preview"],
-            chunks_count=doc["chunks_count"]
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get document: {str(e)}"
-        )
-
-
 @router.delete("/{document_id}", response_model=DocumentDeleteResponse)
 async def delete_document(
+    user_id: int,
     document_id: str,
     neo4j_connector: Neo4jConnector = Depends(get_neo4j_connector)
 ) -> DocumentDeleteResponse:
-    """Удаление документа и всех его чанков"""
+    """Удаление документа (только своего)"""
     try:
-        # Проверяем существование
-        check_query = "MATCH (d:Document {id: $doc_id}) RETURN d LIMIT 1"
-        exists = neo4j_connector.execute_query(check_query, {"doc_id": document_id})
+        # Проверяем, что документ принадлежит пользователю
+        check_query = """
+        MATCH (d:Document {id: $doc_id, user_id: $user_id})
+        RETURN d
+        LIMIT 1
+        """
+        exists = neo4j_connector.execute_query(check_query, {
+            "doc_id": document_id,
+            "user_id": user_id
+        })
         
         if not exists:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Document {document_id} not found"
+                detail="Document not found or access denied"
             )
         
-        # Удаляем документ и связанные чанки
+        # Удаляем документ
         delete_query = """
-        MATCH (d:Document {id: $doc_id})
+        MATCH (d:Document {id: $doc_id, user_id: $user_id})
         OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
         DETACH DELETE d, c
         RETURN count(c) as deleted_chunks
         """
         
-        result = neo4j_connector.execute_write(delete_query, {"doc_id": document_id})
+        result = neo4j_connector.execute_write(delete_query, {
+            "doc_id": document_id,
+            "user_id": user_id
+        })
         deleted_chunks = result[0]["deleted_chunks"] if result else 0
         
         return DocumentDeleteResponse(
