@@ -1,0 +1,22 @@
+[project]
+name = "neo4jrag"
+version = "1.0.0"
+description = "Production-ready Neo4j RAG API with FastAPI"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.11.0",
+    "langchain>=1.0.2",
+    "langchain-community>=0.4",
+    "langchain-core>=1.0.1",
+    "langchain-ollama>=1.0.0",
+    "langchain-text-splitters>=1.0.0",
+    "langgraph>=1.0.1",
+    "neo4j>=6.0.2",
+    "ollama>=0.6.0",
+    "python-dotenv>=1.0.0",
+    "redis>=5.0.0",
+    "numpy>=2.0.0",
+]

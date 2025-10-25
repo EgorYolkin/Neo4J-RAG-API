@@ -1,0 +1,1 @@
+"""Shared schemas like StatusResponse used across the application."""
