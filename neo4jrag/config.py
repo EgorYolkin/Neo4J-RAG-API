@@ -5,7 +5,7 @@ import os
 
 @dataclass
 class Neo4jSettings:
-    uri: str = "bolt://localhost:7687"
+    uri: str = "bolt://localhost:7474"
     username: str = "neo4j"
     password: str = "password123"
     database: str = "neo4j"

@@ -12,6 +12,7 @@ from neo4jrag.services.neo4j.graph_builder import GraphBuilder
 from neo4jrag.services.neo4j.vector_store import VectorStore
 from neo4jrag.services.ollama.ollama_loader import OllamaLoader
 from neo4jrag.services.ollama.rag_pipeline import RAGPipeline
+from neo4jrag.services.entity_extractor.hybrid_entity_extractor import HybridEntityExtractor
 from .exceptions import RAGInitializationError
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,15 @@ async def startup_event(config: Config) -> dict:
         # Статистика кэша
         cache_stats = semantic_cache.get_stats()
         logger.info(f"✓ Redis connected (cache size: {cache_stats.get('cache_size', 0)})")
+
+        # 6. Hybrid Entity Extractor
+        logger.info("🧩 Initializing Hybrid Entity Extractor...")
+        hybrid_extractor = HybridEntityExtractor(
+            neo4j_connector=neo4j_connector,
+            language="ru"  # или "en"
+        )
+        components["entity_extractor"] = hybrid_extractor
+        logger.info("✓ Hybrid Entity Extractor initialized")
 
         
         # 6. Initial Statistics
