@@ -3,7 +3,7 @@ API v1 Router
 """
 from fastapi import APIRouter
 
-from neo4jrag.api.v1.endpoints import health, query, documents, stats, cache
+from neo4jrag.api.v1.endpoints import health, query, documents, stats, cache, knowledges_graph
 
 api_router = APIRouter()
 
@@ -13,3 +13,4 @@ api_router.include_router(query.router, prefix="/query", tags=["Query"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 api_router.include_router(stats.router, prefix="/stats", tags=["Statistics"])
 api_router.include_router(cache.router, prefix="/cache", tags=["Cache"])
+api_router.include_router(knowledges_graph.router, prefix="/kg", tags=["Knowledge Graph"]) 

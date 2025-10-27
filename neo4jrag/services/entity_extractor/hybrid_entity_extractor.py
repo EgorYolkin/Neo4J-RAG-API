@@ -1,75 +1,77 @@
-from typing import List, Dict
-from langchain_ollama import OllamaLLM
+"""
+Hybrid Entity Extraction (spaCy fallback to LLM)
+"""
+from typing import List, Dict, Tuple
+import logging
+
 from neo4jrag.services.entity_extractor.fast_entity_extractor import FastEntityExtractor
+from neo4jrag.services.entity_extractor.llm_entity_extractor import LLMEntityExtractor
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+
+logger = logging.getLogger(__name__)
 
 
 class HybridEntityExtractor:
     """
-    Гибридный экстрактор:
-    1. spaCy для быстрого извлечения сущностей (миллисекунды)
-    2. Tiny LLM для извлечения отношений (секунды)
+    Гибридный экстрактор с fallback:
+    1. Пробуем spaCy (быстро)
+    2. Если не нашло ничего → используем LLM (медленнее, но точнее)
     """
     
-    def __init__(self, neo4j_connector, language="ru"):
-        # spaCy для сущностей
-        self.fast_extractor = FastEntityExtractor(neo4j_connector, language)
+    def __init__(self, neo4j_connector: Neo4jConnector, language: str = "ru"):
+        self.connector = neo4j_connector
         
-        # Tiny LLM для отношений
-        self.tiny_llm = OllamaLLM(
-            model="qwen2:1.5b",
-            base_url="http://localhost:11434",
-            temperature=0.1
-        )
+        # Пробуем инициализировать spaCy
+        self.use_spacy = False
+        try:
+            self.spacy_extractor = FastEntityExtractor(neo4j_connector, language)
+            self.use_spacy = True
+            logger.info("✓ spaCy extractor initialized")
+        except Exception as e:
+            logger.warning(f"⚠ spaCy not available: {e}")
+        
+        # Инициализируем LLM extractor как fallback
+        try:
+            self.llm_extractor = LLMEntityExtractor(
+                neo4j_connector=neo4j_connector,
+                model="qwen2:1.5b",  # Быстрая модель
+                language=language
+            )
+            logger.info("✓ LLM extractor initialized (fallback)")
+        except Exception as e:
+            logger.error(f"❌ LLM extractor failed: {e}")
+            raise
     
-    def extract_all(self, text: str) -> Dict:
-        """
-        Быстрое извлечение:
-        - Сущности: spaCy (мгновенно)
-        - Отношения: tiny LLM (3-5 сек)
-        """
-        # 1. Быстро извлекаем сущности
-        entities = self.fast_extractor.extract_entities_fast(text)
-        
-        # 2. Извлекаем отношения между найденными сущностями
-        entity_names = [e["name"] for e in entities]
-        
-        if len(entity_names) > 1:
-            prompt = f"""Find relationships between entities.
-
-Entities: {", ".join(entity_names[:10])}  # Макс 10 для скорости
-
-Text: {text[:500]}
-
-Relationships (format: entity1->RELATION->entity2):"""
+    def extract_entities_fast(self, text: str) -> List[Dict]:
+        """Извлечение сущностей с fallback"""
+        # Сначала пробуем spaCy
+        if self.use_spacy:
+            entities = self.spacy_extractor.extract_entities_fast(text)
             
-            response = self.tiny_llm.invoke(prompt)
-            relationships = self._parse_relationships(response, entity_names)
-        else:
-            relationships = []
+            if len(entities) > 0:
+                logger.info(f"✓ Found {len(entities)} entities with spaCy")
+                return entities
+            else:
+                logger.info("⚠ spaCy found nothing, using LLM...")
         
-        return {
-            "entities": entities,
-            "relationships": relationships
-        }
+        # Fallback на LLM
+        return self.llm_extractor.extract_entities_fast(text)
     
-    def _parse_relationships(self, response: str, valid_entities: List[str]) -> List[Dict]:
-        """Парсинг отношений из ответа"""
-        relationships = []
+    def create_knowledge_graph(
+        self,
+        text: str,
+        document_id: str,
+        user_id: str
+    ) -> Tuple[int, int]:
+        """Создание графа с гибридным подходом"""
+        # Пробуем spaCy
+        if self.use_spacy:
+            entities = self.spacy_extractor.extract_entities_fast(text)
+            
+            if len(entities) > 0:
+                logger.info(f"✓ Using spaCy ({len(entities)} entities)")
+                return self.spacy_extractor.create_knowledge_graph(text, document_id, user_id)
         
-        for line in response.strip().split("\n"):
-            if "->" in line:
-                parts = line.split("->")
-                if len(parts) == 3:
-                    source = parts[0].strip()
-                    rel_type = parts[1].strip()
-                    target = parts[2].strip()
-                    
-                    # Проверяем, что сущности валидны
-                    if source in valid_entities and target in valid_entities:
-                        relationships.append({
-                            "source": source,
-                            "target": target,
-                            "type": rel_type.upper().replace(" ", "_")
-                        })
-        
-        return relationships
+        # Используем LLM
+        logger.info("✓ Using LLM extractor")
+        return self.llm_extractor.create_knowledge_graph(text, document_id, user_id)

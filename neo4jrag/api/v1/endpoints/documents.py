@@ -27,24 +27,31 @@ router = APIRouter()
 @router.post("/", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def create_document(
     request: DocumentCreateRequest,
+    extract_entities: bool = Query(False, description="Извлечь сущности из документа"),  # ✅ Опциональный параметр
     graph_builder: GraphBuilder = Depends(get_graph_builder),
     vector_store: VectorStore = Depends(get_vector_store)
 ) -> DocumentResponse:
-    """Создание нового документа (только для аутентифицированных пользователей)"""
+    """
+    Создание нового документа
+    
+    Параметры:
+    - extract_entities: Если True, извлекает сущности и строит граф знаний (медленнее)
+    """
     try:
         doc_id = f"doc_{uuid.uuid4().hex[:8]}"
         user_id = request.user_id
-
-        # Добавление документа с user_id
+        
+        # Добавление документа с опциональным извлечением сущностей
         chunks_count = graph_builder.add_document(
             doc_id=doc_id,
             title=request.title,
             content=request.content,
-            user_id=user_id,  # ✅ Привязываем к пользователю
-            metadata=request.metadata
+            user_id=user_id,
+            metadata=request.metadata,
+            extract_entities=extract_entities  # ✅ Передаём флаг
         )
         
-        # Генерация эмбеддингов для новых чанков этого пользователя
+        # Генерация эмбеддингов
         vector_store.generate_embeddings(user_id=user_id)
         
         return DocumentResponse(
@@ -60,6 +67,7 @@ async def create_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create document: {str(e)}"
         )
+
 
 
 @router.get("/", response_model=DocumentListResponse)

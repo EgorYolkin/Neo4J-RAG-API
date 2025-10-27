@@ -7,6 +7,7 @@ from typing import Optional
 from neo4jrag.services.cache.semantic_cache import SemanticCache
 
 from neo4jrag.config import Config
+from neo4jrag.services.entity_extractor.llm_entity_extractor import LLMEntityExtractor
 from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
 from neo4jrag.services.neo4j.graph_builder import GraphBuilder
 from neo4jrag.services.neo4j.vector_store import VectorStore
@@ -19,21 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 async def startup_event(config: Config) -> dict:
-    """
-    Startup event handler
-    
-    Инициализирует все компоненты системы:
-    1. Подключение к Neo4j
-    2. Загрузка Ollama моделей
-    3. Настройка схемы графа
-    4. Создание векторного индекса
-    5. Инициализация RAG pipeline
-    
-    Returns:
-        dict: Словарь с инициализированными компонентами
-    """
+    """Startup event handler"""
     logger.info("=" * 80)
-    logger.info("🚀 Starting Neo4j RAG System")
+    logger.info("🚀 Starting Neo4j RAG System with Entity Extraction")
     logger.info("=" * 80)
     
     components = {}
@@ -65,38 +54,7 @@ async def startup_event(config: Config) -> dict:
         logger.info(f"✓ Loaded LLM: {config.ollama.model}")
         logger.info(f"✓ Loaded Embeddings: {config.ollama.embedding_model}")
         
-        # 3. Graph Builder
-        logger.info("📚 Setting up Graph Builder...")
-        graph_builder = GraphBuilder(
-            connector=neo4j_connector,
-            chunk_size=config.rag.chunk_size,
-            chunk_overlap=config.rag.chunk_overlap
-        )
-        graph_builder.setup_schema()
-        components["graph_builder"] = graph_builder
-        logger.info("✓ Graph schema configured")
-        
-        # 4. Vector Store
-        logger.info("🔍 Setting up Vector Store...")
-        vector_store = VectorStore(
-            connector=neo4j_connector,
-            ollama=ollama_loader,
-            index_name=config.rag.vector_index_name,
-            dimensions=config.rag.embedding_dimension
-        )
-        vector_store.create_vector_index()
-        components["vector_store"] = vector_store
-        logger.info(f"✓ Vector index '{config.rag.vector_index_name}' ready")
-        
-        # 5. RAG Pipeline
-        logger.info("⚙️ Initializing RAG Pipeline...")
-        rag_pipeline = RAGPipeline(
-            vector_store=vector_store,
-            ollama=ollama_loader
-        )
-        components["rag_pipeline"] = rag_pipeline
-        logger.info("✓ RAG Pipeline initialized")
-
+        # 3. Redis Semantic Cache
         logger.info("💾 Connecting to Redis...")
         semantic_cache = SemanticCache(
             host=config.redis.host,
@@ -108,22 +66,58 @@ async def startup_event(config: Config) -> dict:
             max_cache_size=config.redis.max_cache_size
         )
         components["semantic_cache"] = semantic_cache
-        
-        # Статистика кэша
         cache_stats = semantic_cache.get_stats()
         logger.info(f"✓ Redis connected (cache size: {cache_stats.get('cache_size', 0)})")
-
-        # 6. Hybrid Entity Extractor
-        logger.info("🧩 Initializing Hybrid Entity Extractor...")
-        hybrid_extractor = HybridEntityExtractor(
-            neo4j_connector=neo4j_connector,
-            language="ru"  # или "en"
-        )
-        components["entity_extractor"] = hybrid_extractor
-        logger.info("✓ Hybrid Entity Extractor initialized")
-
         
-        # 6. Initial Statistics
+        # 4. Entity Extractor (Hybrid: spaCy + Tiny LLM) ✅ НОВОЕ
+        logger.info("🧠 Initializing Entity Extractor...")
+        try:
+            entity_extractor = LLMEntityExtractor(
+                neo4j_connector=neo4j_connector,
+                model="qwen2:1.5b",
+                language="ru"
+            )
+            components["entity_extractor"] = entity_extractor
+            logger.info("✓ Entity Extractor initialized (spaCy + Tiny LLM)")
+        except Exception as e:
+            logger.warning(f"⚠ Entity Extractor failed to initialize: {e}")
+            logger.warning("Entity extraction will be disabled")
+            components["entity_extractor"] = None
+        
+        # 5. Graph Builder (с entity extractor)
+        logger.info("📚 Setting up Graph Builder...")
+        graph_builder = GraphBuilder(
+            connector=neo4j_connector,
+            chunk_size=config.rag.chunk_size,
+            chunk_overlap=config.rag.chunk_overlap,
+            entity_extractor=components.get("entity_extractor")
+        )
+        graph_builder.setup_schema()
+        components["graph_builder"] = graph_builder
+        logger.info("✓ Graph schema configured")
+        
+        # 6. Vector Store
+        logger.info("🔍 Setting up Vector Store...")
+        vector_store = VectorStore(
+            connector=neo4j_connector,
+            ollama=ollama_loader,
+            index_name=config.rag.vector_index_name,
+            dimensions=config.rag.embedding_dimension
+        )
+        vector_store.create_vector_index()
+        components["vector_store"] = vector_store
+        logger.info(f"✓ Vector index '{config.rag.vector_index_name}' ready")
+        
+        # 7. RAG Pipeline
+        logger.info("⚙️ Initializing RAG Pipeline...")
+        rag_pipeline = RAGPipeline(
+            vector_store=vector_store,
+            ollama=ollama_loader
+        )
+        components["rag_pipeline"] = rag_pipeline
+        logger.info("✓ RAG Pipeline initialized")
+        
+        # 8. Initial Statistics
         logger.info("\n📊 System Statistics:")
         try:
             stats = neo4j_connector.get_statistics()
@@ -159,9 +153,7 @@ async def startup_event(config: Config) -> dict:
         logger.error(f"❌ Startup failed: {str(e)}")
         logger.error("=" * 80)
         
-        # Cleanup частично инициализированных компонентов
         await cleanup_components(components)
-        
         raise RAGInitializationError(f"System startup failed: {str(e)}")
 
 

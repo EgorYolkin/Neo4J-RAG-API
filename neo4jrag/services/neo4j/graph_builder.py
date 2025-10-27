@@ -1,27 +1,38 @@
 """
-Graph builder with multi-user support
+Graph builder с поддержкой entity extraction
 """
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector
+import json  # ✅ ДОБАВЛЕНО
 import logging
+
+from neo4jrag.services.neo4j.neo4j_connector import Neo4jConnector  # ✅ Полный импорт
+from neo4jrag.services.entity_extractor.hybrid_entity_extractor import HybridEntityExtractor  # ✅ Полный импорт
 
 logger = logging.getLogger(__name__)
 
 
 class GraphBuilder:
-    """Построение графа знаний с поддержкой многопользовательского режима"""
+    """Построение графа знаний с извлечением сущностей"""
     
-    def __init__(self, connector: Neo4jConnector, chunk_size: int = 500, chunk_overlap: int = 50):
+    def __init__(
+        self, 
+        connector: Neo4jConnector, 
+        chunk_size: int = 500, 
+        chunk_overlap: int = 50,
+        entity_extractor: Optional[HybridEntityExtractor] = None
+    ):
         self.connector = connector
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
+        self.entity_extractor = entity_extractor
+        logger.info(f"✓ GraphBuilder initialized (entity extraction: {entity_extractor is not None})")
     
     def setup_schema(self) -> None:
-        """Создание constraints и индексов с поддержкой user_id"""
+        """Создание constraints и индексов"""
         constraints = [
             """
             CREATE CONSTRAINT unique_user IF NOT EXISTS
@@ -34,6 +45,10 @@ class GraphBuilder:
             """
             CREATE CONSTRAINT unique_chunk IF NOT EXISTS
             FOR (c:Chunk) REQUIRE c.id IS UNIQUE
+            """,
+            """
+            CREATE CONSTRAINT unique_entity IF NOT EXISTS
+            FOR (e:Entity) REQUIRE (e.name, e.user_id) IS UNIQUE
             """
         ]
         
@@ -44,48 +59,46 @@ class GraphBuilder:
                 if "already exists" not in str(e).lower():
                     logger.warning(f"Constraint issue: {e}")
         
-        # Создаём индекс для быстрого поиска по user_id
-        try:
-            self.connector.execute_write("""
-                CREATE INDEX document_user_idx IF NOT EXISTS
-                FOR (d:Document) ON (d.user_id)
-            """)
-        except Exception as e:
-            if "already exists" not in str(e).lower():
-                logger.warning(f"Index issue: {e}")
+        # Индексы
+        indexes = [
+            """
+            CREATE INDEX document_user_idx IF NOT EXISTS
+            FOR (d:Document) ON (d.user_id)
+            """,
+            """
+            CREATE INDEX entity_user_idx IF NOT EXISTS
+            FOR (e:Entity) ON (e.user_id)
+            """,
+            """
+            CREATE INDEX entity_type_idx IF NOT EXISTS
+            FOR (e:Entity) ON (e.type)
+            """
+        ]
         
-        logger.info("✓ Schema setup complete with multi-user support")
-    
-    def create_user(self, user_id: str, username: str, email: str) -> None:
-        """Создание узла пользователя"""
-        query = """
-        MERGE (u:User {id: $user_id})
-        SET u.username = $username,
-            u.email = $email,
-            u.created_at = datetime()
-        RETURN u
-        """
+        for index in indexes:
+            try:
+                self.connector.execute_write(index)
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    logger.warning(f"Index issue: {e}")
         
-        self.connector.execute_write(query, {
-            "user_id": user_id,
-            "username": username,
-            "email": email
-        })
-        
-        logger.info(f"✓ User '{username}' created/updated")
+        logger.info("✓ Schema setup complete")
     
     def add_document(
         self,
         doc_id: str,
         title: str,
         content: str,
-        user_id: str,  # ✅ Добавлен user_id
-        metadata: Dict = None
+        user_id: str,
+        metadata: Dict = None,
+        extract_entities: bool = False
     ) -> int:
-        """Добавление документа с привязкой к пользователю"""
+        """
+        Добавление документа с опциональным извлечением сущностей
+        """
         metadata = metadata or {}
         
-        # Создание документа с user_id
+        # Создание документа
         doc_query = """
         MERGE (u:User {id: $user_id})
         MERGE (d:Document {id: $doc_id})
@@ -99,14 +112,13 @@ class GraphBuilder:
         RETURN d
         """
         
-        import json
         self.connector.execute_write(doc_query, {
             "user_id": user_id,
             "doc_id": doc_id,
             "title": title,
             "content": content,
             "preview": content[:200],
-            "metadata_json": json.dumps(metadata)
+            "metadata_json": json.dumps(metadata)  # ✅ Теперь json доступен
         })
         
         # Разбиение на чанки
@@ -120,7 +132,8 @@ class GraphBuilder:
             MERGE (c:Chunk {id: $chunk_id})
             SET c.text = $text,
                 c.position = $position,
-                c.user_id = $user_id
+                c.user_id = $user_id,
+                c.length = $length
             MERGE (d)-[:HAS_CHUNK]->(c)
             """
             
@@ -129,7 +142,8 @@ class GraphBuilder:
                 "chunk_id": chunk_id,
                 "text": chunk_text,
                 "position": idx,
-                "user_id": user_id
+                "user_id": user_id,
+                "length": len(chunk_text)
             })
             
             # Связь с предыдущим чанком
@@ -146,4 +160,21 @@ class GraphBuilder:
                 })
         
         logger.info(f"✓ Added document '{title}' for user {user_id} with {len(chunks)} chunks")
+        
+        # Извлечение сущностей
+        if extract_entities and self.entity_extractor:
+            logger.info(f"🧠 Extracting entities from document '{title}'...")
+            try:
+                text_sample = content[:3000] if len(content) > 3000 else content
+                
+                entities_count, relationships_count = self.entity_extractor.create_knowledge_graph(
+                    text=text_sample,
+                    document_id=doc_id,
+                    user_id=user_id
+                )
+                
+                logger.info(f"✓ Extracted {entities_count} entities and {relationships_count} relationships")
+            except Exception as e:
+                logger.error(f"❌ Entity extraction failed: {e}")
+        
         return len(chunks)
